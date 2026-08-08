@@ -53,6 +53,9 @@ jobs:
       - name: Build for the simulator
         run: |
           set -euo pipefail
+          # Build both simulator slices. Apple Silicon runners otherwise produce an
+          # arm64-only binary, which cannot run on Appetize's x86_64 simulators — the
+          # session hangs on load instead of reporting an error.
           xcodebuild build \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
@@ -60,6 +63,9 @@ jobs:
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build \
+            ARCHS="x86_64 arm64" \
+            ONLY_ACTIVE_ARCH=NO \
+            EXCLUDED_ARCHS="" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 

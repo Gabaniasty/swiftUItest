@@ -29,6 +29,10 @@ workflows:
       - name: Build for the simulator
         script: |
           set -euo pipefail
+          # ARCHS + ONLY_ACTIVE_ARCH=NO are essential: this machine is Apple Silicon, so
+          # a default Debug build produces an arm64-only simulator binary. Appetize
+          # largely runs x86_64 simulators, where that binary cannot execute at all and
+          # the session just spins forever. Build both slices.
           xcodebuild build \
             -project Carshare.xcodeproj \
             -scheme Carshare \
@@ -36,8 +40,23 @@ workflows:
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build \
+            ARCHS="x86_64 arm64" \
+            ONLY_ACTIVE_ARCH=NO \
+            EXCLUDED_ARCHS="" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
+
+      - name: Confirm the binary is universal
+        script: |
+          set -euo pipefail
+          APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' | head -1)
+          BIN="$APP/$(basename "$APP" .app)"
+          echo "Architectures in the binary:"
+          lipo -archs "$BIN"
+          # Appetize needs x86_64. Warn loudly rather than shipping a zip that hangs.
+          if ! lipo -archs "$BIN" | grep -q x86_64; then
+            echo "WARNING: no x86_64 slice — Appetize sessions will hang on load." >&2
+          fi
 
       - name: Zip the .app for Appetize
         script: |
