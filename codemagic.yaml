@@ -1,0 +1,115 @@
+# Codemagic build — an alternative to GitHub Actions when Actions is blocked on the
+# account. Free tier gives 500 macOS build minutes a month, and no Apple Developer
+# account is needed because this is a simulator build with code signing off.
+#
+# Setup: sign in at codemagic.io with GitHub, add the swiftUItest repo, pick the
+# "ios-simulator" workflow, press Start new build. When it finishes, download
+# Carshare-sim.zip from the build's Artifacts and upload that to Appetize.
+
+workflows:
+  ios-simulator:
+    name: Carshare simulator build and screenshots
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+
+    environment:
+      xcode: latest
+      vars:
+        BUNDLE_ID: com.prototype.carshare
+
+    scripts:
+      - name: Report toolchain
+        script: |
+          xcodebuild -version
+          xcrun simctl list runtimes | grep -i ios || true
+
+      - name: Build for the simulator
+        script: |
+          set -euo pipefail
+          xcodebuild build \
+            -project Carshare.xcodeproj \
+            -scheme Carshare \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Zip the .app for Appetize
+        script: |
+          set -euo pipefail
+          APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then
+            echo "No .app produced — the build failed." >&2
+            exit 1
+          fi
+          echo "Built $APP"
+          # Zip from inside the products dir so Carshare.app sits at the zip root,
+          # which is what Appetize requires.
+          cd "$(dirname "$APP")"
+          zip -qry "$CM_BUILD_DIR/Carshare-sim.zip" "$(basename "$APP")"
+          ls -lh "$CM_BUILD_DIR/Carshare-sim.zip"
+
+      - name: Screenshot every screen
+        # Never fail the build over screenshots — the zip is the thing that matters.
+        ignore_failure: true
+        script: |
+          set -uo pipefail
+          mkdir -p "$CM_BUILD_DIR/screenshots"
+          APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' | head -1)
+
+          DEVICE=$(xcrun simctl list devices available \
+                    | grep -Eo 'iPhone[^(]*\(([0-9A-F-]{36})\)' \
+                    | head -1 | grep -Eo '[0-9A-F-]{36}')
+          [ -z "$DEVICE" ] && { echo "No iPhone simulator available."; exit 0; }
+
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE"
+          xcrun simctl status_bar "$DEVICE" override \
+            --time "9:41" --batteryState charged --batteryLevel 100 \
+            --cellularMode active --cellularBars 4 --wifiMode active --wifiBars 3 || true
+          xcrun simctl install "$DEVICE" "$APP"
+
+          capture () {
+            xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+            xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startScreen "$1"
+            sleep 5
+            xcrun simctl io "$DEVICE" screenshot "$CM_BUILD_DIR/screenshots/$2.png"
+            echo "Captured $2"
+          }
+
+          capture welcome       01-welcome
+          capture explore       02-explore
+          capture saved         03-saved
+          capture trips         04-trips
+          capture inbox         05-inbox
+          capture profile       06-profile
+          capture host          07-host-dashboard
+          capture hostListings  08-host-vehicles
+          capture hostRequests  09-host-requests
+          capture hostEarnings  10-host-earnings
+
+          xcrun simctl ui "$DEVICE" appearance dark || true
+          capture explore       11-explore-dark
+          capture host          12-host-dashboard-dark
+
+      # Optional: set APPETIZE_TOKEN as an environment variable in the Codemagic UI
+      # and this publishes the build and prints the play URL in the log.
+      - name: Publish to Appetize
+        ignore_failure: true
+        script: |
+          if [ -z "${APPETIZE_TOKEN:-}" ]; then
+            echo "APPETIZE_TOKEN not set — skipping. Download Carshare-sim.zip and upload it yourself."
+            exit 0
+          fi
+          RESPONSE=$(curl -sS -X POST "https://api.appetize.io/v1/apps" \
+            -u "$APPETIZE_TOKEN:" \
+            -F "file=@$CM_BUILD_DIR/Carshare-sim.zip" \
+            -F "platform=ios")
+          echo "$RESPONSE"
+
+    artifacts:
+      - Carshare-sim.zip
+      - screenshots/*.png
+      - build/Build/Products/Debug-iphonesimulator/*.app
