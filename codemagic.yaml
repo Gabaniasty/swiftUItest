@@ -18,10 +18,13 @@ workflows:
         BUNDLE_ID: com.prototype.carshare
 
     scripts:
-      - name: Report toolchain
+      - name: Report toolchain and verify the project opens
         script: |
           xcodebuild -version
           xcrun simctl list runtimes | grep -i ios || true
+          # The project uses Xcode 16's objectVersion 77 format. If this machine's
+          # Xcode is older, this fails loudly here rather than deep in the build.
+          xcodebuild -list -project Carshare.xcodeproj
 
       - name: Build for the simulator
         script: |
