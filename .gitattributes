@@ -1,0 +1,15 @@
+# Normalise everything to LF in the repository. The workflow's shell scripts run on a
+# macOS runner, and CRLF line endings there produce `$'\r': command not found` errors.
+* text=auto eol=lf
+
+# Xcode project files must stay LF for the same reason and to keep diffs sane.
+*.pbxproj text eol=lf
+*.xcscheme text eol=lf
+*.swift text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary

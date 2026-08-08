@@ -1,0 +1,26 @@
+# Xcode / build output
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Simulator build artifacts produced by CI
+Carshare-sim.zip
+screenshots/
+
+# Swift Package Manager
+.build/
+.swiftpm/xcuserdata/
+Package.resolved
+
+# macOS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/

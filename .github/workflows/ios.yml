@@ -1,0 +1,165 @@
+name: Build and screenshot
+
+# Compiles the app on a free macOS runner, boots a real iOS Simulator, and captures a
+# screenshot of every screen. Two artifacts come back:
+#
+#   screenshots  — PNGs of each tab, straight from the simulator
+#   Carshare-sim-app — the built .app, zipped, ready to upload to Appetize.io so you
+#                      can tap through it in a browser (including your phone's browser)
+#
+# Runs on every push, or on demand from the Actions tab.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# Screenshots are taken by launching the app with `-startScreen <name>`, which
+# Carshare/Utilities/LaunchConfig.swift reads. No UI-test driving required.
+env:
+  BUNDLE_ID: com.prototype.carshare
+  SCHEME: Carshare
+  PROJECT: Carshare.xcodeproj
+
+jobs:
+  build:
+    name: Build, boot, screenshot
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Report toolchain
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes | grep -i ios || true
+
+      - name: Build for the simulator
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Locate the built app
+        id: app
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app produced — build must have failed." >&2
+            exit 1
+          fi
+          echo "Found $APP_PATH"
+          echo "path=$APP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Boot a simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          # First available iPhone, by UDID, so we never depend on a specific model name.
+          DEVICE=$(xcrun simctl list devices available \
+                    | grep -Eo 'iPhone[^(]*\(([0-9A-F-]{36})\)' \
+                    | head -1 \
+                    | grep -Eo '[0-9A-F-]{36}')
+          if [ -z "$DEVICE" ]; then
+            echo "No iPhone simulator available on this runner." >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Using simulator $DEVICE"
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE"
+          # A clean, deterministic status bar makes the screenshots presentable.
+          xcrun simctl status_bar "$DEVICE" override \
+            --time "9:41" \
+            --batteryState charged --batteryLevel 100 \
+            --cellularMode active --cellularBars 4 \
+            --wifiMode active --wifiBars 3 || true
+          echo "udid=$DEVICE" >> "$GITHUB_OUTPUT"
+
+      - name: Install the app
+        run: xcrun simctl install "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.path }}"
+
+      - name: Capture every screen
+        run: |
+          set -euo pipefail
+          mkdir -p screenshots
+          DEVICE="${{ steps.sim.outputs.udid }}"
+
+          capture () {
+            local screen="$1"
+            local label="$2"
+            xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+            xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startScreen "$screen"
+            # Give SwiftUI time to lay out and finish its entrance animations.
+            sleep 5
+            xcrun simctl io "$DEVICE" screenshot "screenshots/${label}.png"
+            echo "Captured $label"
+          }
+
+          capture welcome       01-welcome
+          capture explore       02-explore
+          capture saved         03-saved
+          capture trips         04-trips
+          capture inbox         05-inbox
+          capture profile       06-profile
+          capture host          07-host-dashboard
+          capture hostListings  08-host-vehicles
+          capture hostRequests  09-host-requests
+          capture hostEarnings  10-host-earnings
+
+          # Same run again in dark mode — the palette is built for both.
+          xcrun simctl ui "$DEVICE" appearance dark || true
+          capture explore       11-explore-dark
+          capture host          12-host-dashboard-dark
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: warn
+
+      - name: Zip the simulator build for Appetize
+        run: |
+          set -euo pipefail
+          cd "$(dirname "${{ steps.app.outputs.path }}")"
+          zip -qry "$GITHUB_WORKSPACE/Carshare-sim.zip" "$(basename "${{ steps.app.outputs.path }}")"
+          ls -lh "$GITHUB_WORKSPACE/Carshare-sim.zip"
+
+      - name: Upload the app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Carshare-sim-app
+          path: Carshare-sim.zip
+
+      # Optional. Add a repository secret named APPETIZE_TOKEN and this step publishes
+      # the build to a browser-playable iPhone and prints the link. Skipped when the
+      # secret is absent, so the workflow stays green without it.
+      - name: Publish to Appetize
+        if: ${{ secrets.APPETIZE_TOKEN != '' }}
+        env:
+          APPETIZE_TOKEN: ${{ secrets.APPETIZE_TOKEN }}
+        run: |
+          set -euo pipefail
+          RESPONSE=$(curl -sS -X POST "https://api.appetize.io/v1/apps" \
+            -u "$APPETIZE_TOKEN:" \
+            -F "file=@Carshare-sim.zip" \
+            -F "platform=ios")
+          echo "$RESPONSE"
+          KEY=$(echo "$RESPONSE" | grep -Eo '"publicKey"[[:space:]]*:[[:space:]]*"[^"]+"' | grep -Eo '[^"]+$' || true)
+          if [ -n "$KEY" ]; then
+            echo "### Play the app in a browser" >> "$GITHUB_STEP_SUMMARY"
+            echo "https://appetize.io/app/$KEY" >> "$GITHUB_STEP_SUMMARY"
+          fi
