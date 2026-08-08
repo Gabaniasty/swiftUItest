@@ -30,26 +30,45 @@ In **Claude Code Desktop on macOS**, the iOS Simulator pane opens by itself when
 builds and launches the app. It needs Xcode 26.x (the pane does not yet support Xcode 27)
 and is unavailable on Windows, since the simulator only runs on macOS.
 
-### 2. No Mac → free CI build + screenshots, then a browser iPhone
+### 2. No Mac → Codemagic build, then a browser iPhone (verified working)
 
-This is the route to use from Windows. Cost: nothing.
+This is the route that was actually used to get the app running from a Windows PC. Cost:
+nothing.
 
-1. Push this folder to a GitHub repo.
-2. `.github/workflows/ios.yml` runs on a free **macOS runner**: it compiles the app, boots a
-   real iOS Simulator, and screenshots all ten screens in light and dark mode.
-3. Open the run in the **Actions** tab and download two artifacts:
-   - `screenshots` — PNGs of every screen
-   - `Carshare-sim-app` — `Carshare-sim.zip`, the simulator build
+1. Sign in at [codemagic.io](https://codemagic.io) with GitHub and add this repo.
+2. Codemagic's scanner reports **"doesn't seem to contain a mobile application"** — its repo
+   parser can't read Xcode 16's `objectVersion = 77` project format. Click **Set type
+   manually → iOS**. Leave project path `.`. The build itself is unaffected.
+3. Pick the **ios-simulator** workflow from `codemagic.yaml` and start a build. It compiles,
+   checks the binary is universal, screenshots every screen, and zips the app.
+4. From **Artifacts**, download **`Carshare-sim.zip`** — a zip with `Carshare.app` at its
+   root. Screenshots come down as separate PNGs.
+5. Upload that zip to a free [appetize.io](https://appetize.io) account. You get a URL
+   hosting a real iPhone in a browser — open it on the PC or in iPhone Safari and use the app
+   properly. Free tier is roughly 100 minutes a month.
 
-To go from screenshots to something you can *tap*:
+Optional: set `APPETIZE_TOKEN` as a Codemagic environment variable and the build uploads
+itself, printing the URL in the log.
 
-4. Create a free account at [appetize.io](https://appetize.io) and upload `Carshare-sim.zip`.
-5. You get a URL hosting a real iPhone running the app in a browser. Open it on your PC, or
-   in Safari on your iPhone, and use the app properly. The free tier is around 100 minutes a
-   month.
+**The one non-obvious requirement:** the build must produce a **universal** simulator binary
+(`ARCHS="x86_64 arm64" ONLY_ACTIVE_ARCH=NO`). Codemagic builds on Apple Silicon, where a
+default Debug build is arm64-only — and an arm64-only binary on an x86_64 simulator host
+doesn't error, it just spins on "loading" forever. `codemagic.yaml` handles this and asserts
+the `x86_64` slice exists after building.
 
-Optional: put your Appetize API token in a repository secret named `APPETIZE_TOKEN` and the
-workflow uploads each build automatically, printing the play URL in the run summary.
+Appetize only offering iOS 26 is fine; the deployment target is 17.0.
+
+### 2b. GitHub Actions
+
+`.github/workflows/ios.yml` does the same job and is correct, but Actions is blocked on the
+account this was set up under — runs create jobs and no runner is ever assigned, including
+for a trivial ubuntu job on a public repo. That points at billing or account verification.
+If Actions works on your account, this workflow needs no changes; set `APPETIZE_TOKEN` as a
+repository secret to get automatic uploads.
+
+Note if you adapt it: the `secrets` context is **not** allowed in a step-level `if:` — it
+makes the whole workflow fail to parse. Surface the token as a job-level `env` var and test
+`env.APPETIZE_TOKEN != ''` instead.
 
 ### 3. Interactive Xcode without owning a Mac
 
