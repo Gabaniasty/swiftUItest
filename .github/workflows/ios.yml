@@ -27,6 +27,10 @@ jobs:
     name: Build, boot, screenshot
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      # The `secrets` context is not allowed in a step-level `if`, so the token is
+      # surfaced as an env var here and the Appetize step tests that instead.
+      APPETIZE_TOKEN: ${{ secrets.APPETIZE_TOKEN }}
 
     steps:
       - name: Check out the repo
@@ -148,9 +152,7 @@ jobs:
       # the build to a browser-playable iPhone and prints the link. Skipped when the
       # secret is absent, so the workflow stays green without it.
       - name: Publish to Appetize
-        if: ${{ secrets.APPETIZE_TOKEN != '' }}
-        env:
-          APPETIZE_TOKEN: ${{ secrets.APPETIZE_TOKEN }}
+        if: env.APPETIZE_TOKEN != ''
         run: |
           set -euo pipefail
           RESPONSE=$(curl -sS -X POST "https://api.appetize.io/v1/apps" \
