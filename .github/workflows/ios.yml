@@ -23,6 +23,15 @@ env:
   PROJECT: Carshare.xcodeproj
 
 jobs:
+  # Diagnostic: proves the workflow file itself parses and that runners are reachable.
+  # If this job runs but `build` does not, the problem is macOS runner availability,
+  # not this file.
+  smoke:
+    name: Workflow parses
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Workflow file parsed and a runner picked up the job."
+
   build:
     name: Build, boot, screenshot
     runs-on: macos-15
